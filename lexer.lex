@@ -1,8 +1,9 @@
 %{ 
 #include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-
+//#include <stdio.h>
+//#include <stdlib.h>
+//#include <string.h>
+//#include "symbol.h"
 #include "parser.h"
 #define T_eof 0
 
@@ -32,7 +33,7 @@ WHITE 	[ \t]    /* white space */
 "do"    { return T_do;		   }
 "DOWNTO" { return T_DOWNTO;	   }
 "else"  { return T_else;	   }
-"false" { return T_false;      }
+"false" { yylval.expression.value.y = 0; return T_false;      }
 "FOR"	{ return T_FOR;		   }
 "FORM"  { return T_FORM;	   }
 "FUNC"  { return T_FUNC;	   }
@@ -49,7 +50,7 @@ WHITE 	[ \t]    /* white space */
 "STEP"	{ return T_STEP;	   }
 "switch" { return T_switch;    }
 "TO"	{ return T_TO;		   }
-"true" 	{ return T_true;	   }
+"true" 	{ yylval.expression.value.y = 1; return T_true;	   }
 "while"	{ return T_while;	   }
 "WRITE"	{ return T_WRITE;	   }
 "WRITELN" { return T_WRITELN;  }
@@ -91,32 +92,38 @@ WHITE 	[ \t]    /* white space */
 
 [ \t]+ 	        			 { /* do nothing */ 	}
 \n 				 			 { lineno++;			}
-[a-zA-Z]([a-zA-Z]|[0-9]|_)*  { return T_id; 		}
+[a-zA-Z]([a-zA-Z]|[0-9]|_)*  {  yylval.string_value=strdup(yytext); return T_id; }
 
-[0]+        				 { return T_const_int;  }
-[1-9][0-9]* 				 { return T_const_int;  }
+[0]+        				 { yylval.expression.value.x=atoi(yytext);  return T_const_int;  }
+[1-9][0-9]* 				 { yylval.expression.value.x=atoi(yytext);	return T_const_int;  }
 
-[0-9]+(\.[0-9]+)?([eE]([-+]?)[0-9]+)? { return T_const_real;}
-
-'[^\\\'\"]*' 			     { return T_const_char; }
-
-\"[^\n]*\"			  		 { return T_string;	    } 
-
-"//"[.]*\n 			         { lineno++;		    }
+[0-9]+(\.[0-9]+)?([eE]([-+]?)[0-9]+)? {  yylval.expression.value.w=strtold(yytext,NULL); return T_const_real;}
 
 
-"/*" 				 		 { BEGIN(COMMENT) ;  	}
-<COMMENT>"*/"	      		 { BEGIN(INITIAL) ;   	}
-<COMMENT>"\n"		  		 {    lineno++;	 		}
+
+"\'\\n\'"						 { yylval.expression.value.z='\n' ;   return T_const_char; }
+"\'\\t\'"						 { yylval.expression.value.z='\t' ;  return T_const_char; }
+"\'\\r\'"						 { yylval.expression.value.z='\r' ;  return T_const_char; }
+"\'\\0\'"						 { yylval.expression.value.z='\0' ;  return T_const_char; }
+"\'\\\\\'"						 { yylval.expression.value.z='\\' ;  return T_const_char; }
+"\'\\\"\'"						 { yylval.expression.value.z='"' ;   return T_const_char; }
+"\'\\\'\'"						 { yylval.expression.value.z='\'' ; return T_const_char; }
+
+'[^\\\'\"]*' 			     { yylval.expression.value.z=yytext[0]-'a';  return T_const_char; }
+
+\"[^\n^\"]*\"			  		 { yylval.expression.value.q=strdup(yytext);  return T_string;    } 
+
+"//"[^\n]*\n 			         { lineno++;		    }
+
+
+"/*" 				 		 {  BEGIN(COMMENT) ;  	}
+<COMMENT>"*/"	      		 {  BEGIN(INITIAL) ;   	}
+<COMMENT>"\n"		  		 {   lineno++;	 		}
 <COMMENT>"*"		  		 {   /*nothing*/	 	}
-<COMMENT>[^*\n]+	 		 {	  /*nothing*/	 	}
+<COMMENT>[^*\n]+	 		 {	 /*nothing*/	 	}
 
 .  				 		     { printf( "UNRECOGNIZED CHARACTER %s\n at line:%d\n",yytext,lineno);
 					           exit(1); 			}
 
 %%
-
-/* Empty main is located in parser.y. 
-*
-*/
 

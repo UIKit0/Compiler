@@ -5,27 +5,31 @@ else
    EXE=
 endif
 
-CFLAGS=-g -Wall
+CFLAGS=-g
 CC=gcc
 
-parser$(EXE): lexer.o parser.o
-	$(CC) $(CFLAGS) -o $@ $^ -lfl
+semantic$(EXE): lexer.o parser.o symbol.o error.o general.o
+	$(CC) $(CFLAGS) -o $@ $^ -lm -lfl
 
-lexer.c: lexer.lex
+parser.c parser.h: parser.y symbol.h
+	bison -v -d -o parser.c $<
+
+lexer.c: lexer.lex symbol.h parser.h
 	flex -s -o $@ $<
 
+parser.o: parser.c parser.h
 lexer.o: lexer.c parser.h
+general.o  : general.c general.h error.h
+error.o    : error.c general.h error.h
+symbol.o   : symbol.c symbol.h general.h error.h
 
-parser.c parser.h: parser.y
-	bison --report=solved --report=state -v -d -o parser.c $<
+
+
 
 .PHONY: clean distclean
 
 clean:
-	$(RM) lexer.c parser.c parser.h parser.output *.o *~
+	$(RM) lexer.c parser.c parser.h parser.output *.o *~ lexer.o
 
 distclean: clean
-	$(RM) parser$(EXE)
-
-clean_all:
-	$(RM) lexer.c parser.c parser.h parser.output *.o *~ parser$(EXE)
+	$(RM) semantics$(EXE)
