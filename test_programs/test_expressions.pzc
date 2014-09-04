@@ -1,0 +1,15 @@
+int global=1,b;
+PROGRAM first()
+{
+	bool flag = false;
+	char string[] = "dimos";
+	REAL fl = 42.0;
+
+	b := global;
+	b++;
+	if(b!= global)
+		b = global;
+	else
+		b = 0;
+	
+}

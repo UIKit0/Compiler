@@ -4,6 +4,7 @@
 //#include <stdlib.h>
 //#include <string.h>
 //#include "symbol.h"
+//#include "semantics.h"
 #include "parser.h"
 #define T_eof 0
 
@@ -109,7 +110,7 @@ WHITE 	[ \t]    /* white space */
 "\'\\\"\'"						 { yylval.expression.value.z='"' ;   return T_const_char; }
 "\'\\\'\'"						 { yylval.expression.value.z='\'' ; return T_const_char; }
 
-'[^\\\'\"]*' 			     { yylval.expression.value.z=yytext[0]-'a';  return T_const_char; }
+'[^\\\'\"]*' 			     { yylval.expression.value.z=yytext[1];  return T_const_char; }
 
 \"[^\n^\"]*\"			  		 { yylval.expression.value.q=strdup(yytext);  return T_string;    } 
 

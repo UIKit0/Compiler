@@ -1,0 +1,16 @@
+PROGRAM third()
+{
+	int first = 0,last = 10,offset = 2,index;
+	REAL temp;
+
+	FOR(index,(first+offset) TO (last+offset))
+	{
+		temp := index*1.42;
+	}
+
+	FOR(index,last DOWNTO first STEP offset)
+	{
+		if(index == 5)	break;
+		else if(index == 6)	continue;
+	}
+}

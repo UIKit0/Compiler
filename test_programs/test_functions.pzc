@@ -1,0 +1,11 @@
+FUNC int factorial (int n)
+{
+	int result = 1;
+
+	FOR(index,1 TO n)
+	{
+		result := result*index;
+	}
+	return result;
+}
+

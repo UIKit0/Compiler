@@ -1,0 +1,38 @@
+const int N = 1000, M = 100;
+const int N2 = N*N;
+const char EOLN = '\n';
+const int test = 3;
+//int W = 5.2;
+REAL x, pi = 3.14, k = 17;
+char s[80], t[25][80];
+
+
+
+FUNC int rout_test (REAL x,bool y[],int &z)
+{
+	//int x,y,z;
+	char w = s[1];
+	return 1;
+}
+
+
+PROC proc_test() 
+{
+	int x,y,z;
+	while (true)
+		while(true)	
+			break;
+//	break;
+}
+
+PROGRAM prog_test ()
+{
+	int x,y,z;
+	REAL w;
+	bool flag1,flag2;
+	char char1,char2;
+
+//	x = y * w;
+	w = y * w;
+	
+}

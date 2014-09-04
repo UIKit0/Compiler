@@ -1,0 +1,23 @@
+PROGRAM fourth()
+{
+	bool c,d;
+	int a,b=3;
+	REAL index = 1;
+
+	do
+	{
+		a := b+index;
+		a := b*index;
+		a := b-index;
+		a := b/index;
+		a := b%index;
+		a := b MOD index
+		c := (a>b);
+		index ++;
+	}
+	while(index < 5);
+
+	c := (c and d);
+	c := (c or d);
+
+}

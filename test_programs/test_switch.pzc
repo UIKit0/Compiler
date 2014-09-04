@@ -1,0 +1,16 @@
+PROGRAM fifth()
+{
+	int i = 0;
+	char string[] = "dimos";
+	int arr[2][5];
+
+	switch(string)
+	{
+		case "dimos":i++;
+		case "antreas":break;
+		case "papaspyrou":NEXT;
+		case "sagwnas":a--;
+		default: a := a*2;
+
+	}
+}

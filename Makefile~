@@ -8,7 +8,7 @@ endif
 CFLAGS=-g
 CC=gcc
 
-quadruples$(EXE): lexer.o parser.o symbol.o error.o general.o semantics.o quadruples.o
+semantic$(EXE): lexer.o parser.o symbol.o error.o general.o semantics.o quadruples.o
 	        $(CC) $(CFLAGS) -o $@ $^ -lm -lfl
 
 parser.c parser.h: parser.y symbol.h

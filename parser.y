@@ -5,16 +5,27 @@
 #include <string.h>
 #include <math.h>
 #include "symbol.h"
+#include "quadruples.h"
+
 
 extern int lineno;
+extern unsigned int   tempNumber;
 void yyerror (const char *msg);
 Type global_type,function_type;
 SymbolEntry *p,*f,*next_parameter;
 bool evaluate_constant,l_value_flag,we_define_globals = 1,got_lvalue_from_table,function_is_defined = false,found_return_statement = false;
-char *global_type_string;
-int parameter_counter,total_parameters,loop_counter,count_lvalue_dimensions = 0,dimensions_in_expressions;
-
-
+char *global_type_string,*global_routine_name;
+int parameter_counter,total_parameters,loop_counter,count_lvalue_dimensions = 0,dimensions_in_expressions,Q,count_lvalues;
+SymbolEntry *W,*W1,*W2,*W3,*Wq;
+char temp_name1[5],temp_name2[5],temp_name3[5];
+int temp,N;
+loop_stack *loop_seq;
+switch_stack *switch_seq;
+char *array_result_name;
+int array_dimensions=0,counter=0,min_expr;
+FILE *fp;
+Type t; 
+quad_node *L,*L1,*L2,*L3;
 
 %}
 
@@ -22,44 +33,7 @@ int parameter_counter,total_parameters,loop_counter,count_lvalue_dimensions = 0,
 %code requires {
 
 #include "symbol.h"
-typedef union a 
-{ RepInteger x;				
-  RepBoolean y;
-  RepChar z;
-  RepReal w;
-  RepString q; } expression_value;
-typedef struct expr 
-{ 
-  Type type;
-  expression_value value; 
-  bool is_constant ;} Expression;
-
-void makeReal(Expression e1,Expression e2,Expression * e3,int operator);
-void makeInteger(Expression e1,Expression e2,Expression * e3,int operator);
-void makeComparison(Expression e1,Expression e2,Expression * e3,int operator);
-void makeLogical(Expression e1,Expression e2,Expression * e3,int operator);
-void setConstant(Expression e,const char * name);
-bool assignmentEvaluation(Type t1,Type t2);
-bool check_array_dimension(Expression e);
-bool check_array_dimension_for_function(Expression e);
-Type makeArray(Expression e,Type t);
-Expression checkForArrayLvalue (const char * variable);
-Expression checkForLvalue(const char * variable);
-int countParameters(SymbolEntry *temp);
-bool valid_loop_variable(SymbolEntry *loop_var);
-void validateParameter(Expression e,SymbolEntry *parameter);
-char * getType(Type type);
-void operationAndAssignment(Expression e1,Expression e2,int operator);
-Expression typeInference(Expression e1,Expression e2,int operator,bool two_expressions);
-void validate_range_and_step(Expression e1,Expression e2,Expression step,bool has_step);
-void validate_return(Type return_type);
-void validate_Constant (const char * variable, Expression e);
-void validate_Variable (const char * variable, Type type);
-void validate_Routine (const char *routine_name, Type type);
-void validate_Variable_with_assignment (const char *variable, Type type, Expression e);
-void validate_print_expression (Expression x,Expression y,Expression w,int how_many);
-Expression unit_expression;
-
+#include "quadruples.h"
 }
 
 
@@ -71,6 +45,9 @@ RepReal real_value;
 RepString string_value;
 Expression expression;
 Type type;
+Statement statement;
+Routine routine;
+Range range;
 }
 
 
@@ -103,11 +80,11 @@ Type type;
 %token T_const "const"
 %token T_cont "continue"
 %token T_def "default"
-%token T_do "do"
+%token T_do 
 %token T_DOWNTO "DOWNTO"
 %token T_else "else"
 %token T_false "false"
-%token T_FOR "FOR"
+%token T_FOR 
 %token T_FORM "FORM"
 %token T_FUNC "FUNC"
 %token T_if "if"
@@ -124,12 +101,12 @@ Type type;
 %token T_switch "switch"
 %token T_TO "TO"
 %token T_true "true"
-%token T_while "while"
+%token T_while 
 %token T_WRITE "WRITE"
 %token T_WRITELN "WRITELN"
 %token T_WRITESP "WRITESP"
 %token T_WRITESPLN "WRITESPLN"
-%token T_const_int 		/**Εγιναν κάποιες αλλαγές εδώ **/
+%token T_const_int 
 %token T_const_real 
 %token T_id
 %token T_const_char 
@@ -178,9 +155,12 @@ Type type;
 %left T_mult T_div T_MOD T_mod
 %left T_not T_notb
 
-%type<string_value> type T_id
-%type<expression> const_expr expr l_value
-%type<type> var_init_list  formal_list call
+%type<string_value> type T_id range_choose
+%type<expression> const_expr expr l_value cond call T_const_int T_const_real T_const_char T_string T_true T_false 
+%type<type> var_init_list  formal_list 
+%type<statement>  block stmt block_list choose_case switch_cases T_while T_do T_FOR
+%type<routine> routine routine_header choose program_header
+%type<range> range
 
 
 %%
@@ -188,7 +168,7 @@ Type type;
 /* Grammar starts here 
  * Basic declarations that make up a program
  */
-module : declaration_list {  closeScope(); };
+module : {fp = fopen("quads.txt","w+");printf("file opened"); } declaration_list {  closeScope();printf("program finished\n"); };
 
 declaration_list : declaration declaration_list { } 
 				   | /*nothing*/{ } ;
@@ -201,10 +181,10 @@ declaration : const_def { }
 
 /* Constants definition.
  */
-const_def  : T_const type T_id T_assign const_expr const_def_list T_mark { 	validate_Constant($3,$5); };
+const_def  : T_const type T_id T_assign const_expr const_def_list T_mark { 	validate_Constant($3,$5); /*quad*/ GENQUAD(":=",$5.name,"-",strdup($3));};
 
 
-const_def_list : T_coma T_id T_assign const_expr const_def_list { 	validate_Constant($2,$4); }
+const_def_list : T_coma T_id T_assign const_expr const_def_list { 	validate_Constant(strdup($2),$4); /*quad*/ GENQUAD(":=",$4.name,"-",strdup($2));}
 			   | /****nothing***/ {  };
 
 
@@ -214,12 +194,12 @@ const_def_list : T_coma T_id T_assign const_expr const_def_list { 	validate_Cons
 //must take the variables into consideration with the right order example : int x,y,z,x the last x has the problem
 var_def : type T_id { validate_Variable($2,global_type); } 
 		  var_def_list T_mark { }
-		| type T_id T_assign expr { validate_Variable_with_assignment($2,global_type,$4); } var_def_list T_mark { }
+		| type T_id T_assign expr { validate_Variable_with_assignment(strdup($2),global_type,$4); /*quad*/ GENQUAD(":=",$4.name,"-",strdup($2));printf("expression passed to temp var\n");} var_def_list T_mark { }
 	    | type T_id var_init_list { validate_Variable($2,$3); } var_def_list T_mark { };
 
 var_def_list :   T_coma T_id {  validate_Variable($2,global_type);  } 
 				 var_def_list  { }
- 			   | T_coma T_id T_assign expr { validate_Variable_with_assignment($2,global_type,$4); } var_def_list { }
+ 			   | T_coma T_id T_assign expr { validate_Variable_with_assignment(strdup($2),global_type,$4); /*quad*/ GENQUAD(":=",$4.name,"-",strdup($2));} var_def_list { }
  			   | T_coma T_id var_init_list { validate_Variable($2,$3); } var_def_list { }
  			   | /***nothing***/ {  };
 
@@ -235,10 +215,10 @@ var_init_list : T_lbracket const_expr T_rbracket {  if ((!$2.is_constant)||check
 
 
 /*** ROUTINES DECLARATIONS ***/
-routine_header: choose T_lpar routine_header_if T_rpar { endFunctionHeader(p,function_type); } ;
+routine_header: choose T_lpar routine_header_if T_rpar { endFunctionHeader(p,function_type); /*quad*/$$.name = $1.name;} ;
 	       
-choose : T_PROC T_id {  validate_Routine($2,typeVoid); }
-	   | T_FUNC type T_id { validate_Routine($3,global_type); };
+choose : T_PROC T_id {  validate_Routine($2,typeVoid); /*quad*/$$.name = strdup($2);}
+	   | T_FUNC type T_id { validate_Routine($3,global_type); /*quad*/ $$.name = strdup($3);};
 routine_header_if : type formal routine_header_if_list { }
 				  | /***nothing***/    {   } ;
 routine_header_if_list : T_coma type formal routine_header_if_list{  }   
@@ -251,25 +231,36 @@ formal_if2 : const_expr { }
 formal_list : T_lbracket formal_if2 T_rbracket formal_list { $$ = typeArray(1,$4); }
 			| T_lbracket formal_if2 T_rbracket  { $$ = typeArray(1,global_type); };
 routine : routine_header T_mark  { forwardFunction(p); 
-								   closeScope(); 
+				   closeScope(); 
 								 } 	
-	    | routine_header block { if ((!found_return_statement)&&(function_type != typeVoid))
+	    | routine_header {/*quad*/printf("before routine header\n");
+	    			      GENQUAD("unit",$1.name,"-","-");
+	    			      printf("after routine header\n");} block { if ((!found_return_statement)&&(function_type != typeVoid))
 	    						 	fatal("Function '%s' does not return aprropriate value\n",p->id);
 	    						 we_define_globals = 1; 
 	    						 function_is_defined = false; 
 	    						 found_return_statement = false;
 	    						 closeScope(); 
+	    						 
+	    						 /*quad*/
+	    						 printf("before whole program block\n");
+	    						 sprintf(temp_name1,"%d",NEXTQUAD());
+	    						 BACKPATCH(fp,$3.NEXT,temp_name1);GENQUAD("endu",$1.name,"-","-");
+	    						 if(fileno(fp) == -1) fp = fopen("quads.txt","a+");
+	    						 printf("after whole program block\n");
+	    						 
 	    					   };
 
 
 program_header : T_PROGRAM T_id T_lpar T_rpar { if (lookupEntry($2,LOOKUP_CURRENT_SCOPE,0))
-	   												fatal("Can not declare main program with name '%s',name already used. Line = %d\n",$2,lineno);
-	   											p = newFunction($2); 
-												openScope(); 
-												endFunctionHeader(p,typeVoid); 
-											  };
+	   						fatal("Can not declare main program with name '%s',name already used. Line = %d\n",$2,lineno);
+	   					p = newFunction($2); 
+						openScope(); 
+						endFunctionHeader(p,typeVoid);
+						/*quad*/ $$.name = strdup($2); 
+						};
 
-program : program_header { we_define_globals = 0; } block {   closeScope(); };
+program : program_header { we_define_globals = 0; /*quad*/ GENQUAD("unit",$1.name,"-","-");printf("program unit created\n");} block {   printf("before whole program block\n");sprintf(temp_name1,"%d",NEXTQUAD());printf("inside whole program block 1\n");print_list($3.NEXT);BACKPATCH(fp,$3.NEXT,temp_name1);if(fileno(fp) == -1) fp = fopen("quads.txt","a+");printf("inside whole program block 2\n");printf("program name: %s\n",$1.name);GENQUAD("endu",$1.name,"-","-");printf("after whole program block\n"); /*quad*/ closeScope(); };
 
 
 
@@ -283,47 +274,6 @@ type : T_int  { $$=strdup("Integer"); global_type=typeInteger; global_type_strin
 	 | T_REAL { $$=strdup("Real");    global_type=typeReal; global_type_string=strdup("Real"); } ;
 
 
-
-
-
-/* Expressions.
- */
-
-const_expr : { evaluate_constant=1; } expr { $$=$2; } ;
-
-expr : T_const_int  { $$.type=typeInteger; $$.is_constant=1;  l_value_flag=0; }
-	 | T_const_real { $$.type=typeReal; $$.is_constant=1;  l_value_flag=0;   }
-	 | T_const_char { $$.type=typeChar; $$.is_constant=1;  l_value_flag=0;   }
-	 | T_string 	{  $$.type=typeArray(strlen($$.value.q)+1,typeChar); $$.is_constant=1; l_value_flag=0;}
-	 | T_true		{ $$.type=typeBoolean; $$.is_constant=1; l_value_flag=0;}
-	 | T_false		{ $$.type=typeBoolean; $$.is_constant=1; l_value_flag=0;}
- 	 | T_lpar expr T_rpar { $$=$2; l_value_flag=0;} 
-	 | l_value	      { $$=$1;  }
-	 | call		      { $$.is_constant=0; $$.type=$1;l_value_flag=0; }
-	 | T_plus expr 	        { $$=typeInference($2,$2,T_plus,0); l_value_flag=0;}
-	 | T_not expr 	        { $$=typeInference($2,$2,T_not,0);l_value_flag=0; }
-	 | T_notb expr 	        { $$=typeInference($2,$2,T_notb,0); l_value_flag=0;}
-	 | T_minus expr         { $$=typeInference($2,$2,T_minus,0);l_value_flag=0;}
-	 | expr T_plus expr     { $$=typeInference($1,$3,T_plus,1);l_value_flag=0;}
-	 | expr T_minus expr    { $$=typeInference($1,$3,T_minus,1);l_value_flag=0;}
-	 | expr T_mult expr     { $$=typeInference($1,$3,T_mult,1);l_value_flag=0;}
-	 | expr T_div expr      { $$=typeInference($1,$3,T_div,1);l_value_flag=0;}
-	 | expr T_mod expr      { $$=typeInference($1,$3,T_mod,1);l_value_flag=0;}
-	 | expr T_MOD expr      { $$=typeInference($1,$3,T_MOD,1);l_value_flag=0;}
-	 | expr T_equal expr    { $$=typeInference($1,$3,T_equal,1);l_value_flag=0;}
-	 | expr T_nequal expr   { $$=typeInference($1,$3,T_nequal,1);l_value_flag=0;}
-	 | expr T_less expr     { $$=typeInference($1,$3,T_less,1);l_value_flag=0;}
-	 | expr T_greater expr  { $$=typeInference($1,$3,T_greater,1);l_value_flag=0;}
-	 | expr T_lequal expr   { $$=typeInference($1,$3,T_lequal,1);l_value_flag=0;}
-	 | expr T_egreater expr { $$=typeInference($1,$3,T_egreater,1);l_value_flag=0;}
-	 | expr T_AND expr      { $$=typeInference($1,$3,T_AND,1);l_value_flag=0;}
-	 | expr T_and expr      { $$=typeInference($1,$3,T_and,1);l_value_flag=0;}
-	 | expr T_OR expr       { $$=typeInference($1,$3,T_OR,1);l_value_flag=0;}
-	 | expr T_or expr       { $$=typeInference($1,$3,T_or,1);l_value_flag=0;} ;
-
-
-
-
  
 
 /* lvalue explanation.
@@ -331,21 +281,87 @@ expr : T_const_int  { $$.type=typeInteger; $$.is_constant=1;  l_value_flag=0; }
  * in case of array expression must be valid in brackets
  */
 
-l_value : T_id { $$ = checkForLvalue($1);  };
-		| T_id T_lbracket expr T_rbracket  l_value_list {   if ($3.is_constant) 
-		     													if (check_array_dimension($3)) 
-		     														fatal("Array subscript is not an integer. Line = %d",lineno);
-		     												dimensions_in_expressions++;
-		     												$$ = checkForArrayLvalue($1);
-		     												dimensions_in_expressions = 0;
-		     											};
+l_value : T_id { $$ = checkForLvalue($1);  /*quad*/$$.name = strdup($1);};
+		| T_id {printf("writing array name\n");array_result_name = strdup($1);min_expr = tempNumber;} T_lbracket expr T_rbracket  l_value_list {   if ($4.is_constant) 
+		     							if (check_array_dimension($4)) 
+		     								fatal("Array subscript is not an integer. Line = %d",lineno);
+		     						dimensions_in_expressions++;
+		     						$$ = checkForArrayLvalue($1);
+		     						dimensions_in_expressions = 0;
+		     				       /*quad*/ printf("before array\n");
+		     						W = newTemporary($$.type);
+		     						$$.name = strdup(W->id);
+		     						printf("array 3\n");    
+		     						   
+		     						printf("array 4\n");
+		     						if(array_dimensions == 0){
+		     							t = (Type) new(sizeof(struct Type_tag));
+		     							printf("array 6a\n");
+		     							t->kind = TYPE_INTEGER;
+		     							printf("array 7a\n");
+		     							t->refCount=0;
+		     							printf("array 8a\n");
+		     							W1 = newTemporary(t);
+		     							printf("array 9a\n");
+		     							sprintf(temp_name3,"$%d",(min_expr+array_dimensions));
+		     							GENQUAD("array",strdup($1),temp_name3,strdup(W1->id));
+		     													}
+		     						else {
+		     							printf("array 5b\n");
+		     							sprintf(temp_name1,"$%d",(tempNumber-2));
+		     							printf("array 7b\n");
+		     							t->kind = TYPE_INTEGER;
+		     							t->refCount=0;
+		     							printf("array 8b\n");
+		     							W1 = newTemporary(t);
+		     							printf("array 9b\n");
+		     							sprintf(temp_name3,"$%d",(min_expr+array_dimensions));
+		     							GENQUAD("array",temp_name1,temp_name3,strdup(W1->id));
+		     													}
+		     						array_dimensions=0;
+		     						printf("after array\n");
+		     						sprintf(temp_name1,"$%d",(tempNumber-1));
+		     						GENQUAD(":=",strdup(W1->id),"-",strdup(W->id));
+		     						counter = 0;
+		     									};
 
 l_value_list :   /***nothing***/ { }
 		     | T_lbracket expr T_rbracket l_value_list { dimensions_in_expressions++;
-		     											 if ($2.is_constant) 
-		     											 	if (check_array_dimension($2)) 
-		     													fatal("Array subscript is not an integer. Line = %d",lineno);
-		     										   } ;
+		     						if ($2.is_constant) 
+		     							if (check_array_dimension($2)) 
+		     								fatal("Array subscript is not an integer. Line = %d",lineno);
+		     				       /*quad*/ printf("before array more dim\n");
+		     				       		t = (Type) new(sizeof(struct Type_tag));
+		     				       		if(array_dimensions == 0){
+		     				       				
+		     							printf("array 6a\n");
+		     							t->kind = TYPE_INTEGER;
+		     							printf("array 7a\n");
+		     							t->refCount=0;
+		     							printf("array 8a\n");
+		     							W1 = newTemporary(t);
+		     							printf("array 9a\n");
+		     							sprintf(temp_name3,"$%d",(min_expr+array_dimensions));
+		     							GENQUAD("array",array_result_name,temp_name3,strdup(W1->id));
+		     						}
+		     						else {
+		     							
+		     							printf("array 5b\n");
+		     							sprintf(temp_name1,"$%d",(tempNumber-1));
+		     							printf("array 6b\n");
+		     							sprintf(temp_name2,"$%d",tempNumber);
+		     							printf("array 7b\n");
+		     							t->kind = TYPE_INTEGER;
+		     							t->refCount=0;
+		     							printf("array 8b\n");
+		     							W1 = newTemporary(t);
+		     							printf("array 9b\n");
+		     							sprintf(temp_name3,"$%d",(min_expr+array_dimensions));
+		     							GENQUAD("array",temp_name1,temp_name3,temp_name2);
+		     						}
+		     						array_dimensions++;
+		     						printf("after array more dim\n");
+		     				} ;
 	 		
 
 
@@ -355,20 +371,33 @@ l_value_list :   /***nothing***/ { }
 /* FUNCTION CALLS */
 
 call :  T_id {  f = lookupEntry($1,LOOKUP_ALL_SCOPES,0);
-		        if ((!f)||(f->entryType!=ENTRY_FUNCTION))
-		       		fatal("Function '%s' is not declared. Line = %d\n",$1,lineno);
+		if ((!f)||(f->entryType!=ENTRY_FUNCTION))
+		       	fatal("Function '%s' is not declared. Line = %d\n",$1,lineno);
                 next_parameter = f->u.eFunction.firstArgument; 
                 parameter_counter = 0;; 
                 total_parameters = countParameters(f) ;
-              } 
-        T_lpar call_if T_rpar { $$=f->u.eFunction.resultType; }; 
-call_if :{ l_value_flag = 1; } expr {  validateParameter($2,next_parameter);  } call_if_list { }
+                /*quad*/ global_routine_name = strdup($1);
+                				  } 
+        T_lpar {/*quad*/  N = 1;} call_if T_rpar { $$.type=f->u.eFunction.resultType; /*quad*/ if ( ISFUNCTION(strdup($1)) ){$$.temp = tempNumber;W = newTemporary(FUNCRESULT(strdup($1)));$$.name = strdup(W->id);GENQUAD("par","RET",strdup(W->id),"-");}GENQUAD("call","-","-",strdup($1));}; 
+call_if :{ l_value_flag = 1; } expr {  validateParameter($2,next_parameter);
+		  	      /*quad*/ if ( PARAMMODE(global_routine_name,N) == "V" && ($2.type != PARAMTYPE(global_routine_name,N) ) )
+						{GENQUAD("par",$2.name,PARAMMODE(global_routine_name,N),"-");}
+					else
+						{
+						exit(0);
+						GENQUAD("par",$2.name,PARAMMODE(global_routine_name,N),"-");}
+					N = N+1;} call_if_list { }
 		| /***nothing***/ { if (next_parameter) 
-								fatal("Not enough arguments in function %s, total %d arguments expected. Line = %d",f->id,total_parameters,lineno);
+					fatal("Not enough arguments in function %s, total %d arguments expected. Line = %d",f->id,total_parameters,lineno);
 						  };
-call_if_list :  T_coma { l_value_flag = 1; } expr {  validateParameter($3,next_parameter); } call_if_list { }
+call_if_list :  T_coma { l_value_flag = 1; } expr {  validateParameter($3,next_parameter);
+				/*quad*/ if ( PARAMMODE(global_routine_name,N) == "V" && ($3.type != PARAMTYPE(global_routine_name,N) ) )
+						{GENQUAD("par",$3.name,PARAMMODE(global_routine_name,N),"-");}
+					else
+						{GENQUAD("par",$3.name,PARAMMODE(global_routine_name,N),"-");}
+					N = N+1; } call_if_list { }
 			 | /***nothing***/ { if (next_parameter) 
-									fatal("Not enough arguments in function %s, total %d arguments expected. Line = %d",f->id,total_parameters,lineno); 
+						fatal("Not enough arguments in function %s, total %d arguments expected. Line = %d",f->id,total_parameters,lineno); 
 							   };
 
 
@@ -376,10 +405,10 @@ call_if_list :  T_coma { l_value_flag = 1; } expr {  validateParameter($3,next_p
 
 
 
-block : T_lhook block_list T_rhook { };
-block_list : local_def block_list {  }
-		   | stmt block_list {  }
-		   | /***nothing***/ {  } ;
+block : T_lhook block_list T_rhook { /*quad*/ printf("open hook-block\n");$$.NEXT = $2.NEXT;printf("close hook-block\n");};
+block_list : local_def block_list {  /*quad*/ printf("first local_def of block list\n");$$.NEXT = $2.NEXT;printf("rest local_defs of block list\n");}
+		   | stmt {/*quad*/ printf("first stmt of block list\n");L = $1.NEXT; printf("first stmt of block list 1\n");sprintf(temp_name1,"%d",NEXTQUAD());printf("first stmt of block list 2\n");print_list(L);printf("   fp =  %d \n",fileno(fp));BACKPATCH(fp,L,temp_name1);if(fileno(fp) == -1) fp = fopen("quads.txt","a+");printf("   fp =  %d \n",fileno(fp));printf("after first stmt of block list\n");} block_list { /*quad*/ printf("rest stmts of block list\n");$$.NEXT = $3.NEXT;printf("after rest stmts of block list\n"); }
+		   | /***nothing***/ { /*quad*/ printf("no other stmts-defs in block\n");$$.NEXT = NULL;} ;
 
 local_def : const_def { }
 		  | var_def { };
@@ -392,82 +421,274 @@ local_def : const_def { }
 
 /* STATEMENTS */
 
-stmt : T_mark { /* empty statement */ }
+stmt : T_mark { /*quad*/  $$.NEXT = EMPTYLIST();}
      | l_value T_assign expr T_mark {   if ($1.is_constant) 
-     								  		fatal("Cannot change constant value. Line = %d\n",lineno);
-     								  	else if (!assignmentEvaluation($1.type,$3.type))
-     								  		fatal("Invalid assignment.Cannot assign %s to %s. Line = %d\n",getType($3.type),getType($1.type),lineno);
-     								}
-     | l_value T_plusassign expr T_mark  {  operationAndAssignment($1,$3,T_plus);   }
-     | l_value T_minusassign expr T_mark {  operationAndAssignment($1,$3,T_minus);  }
-     | l_value T_multassign expr T_mark  {  operationAndAssignment($1,$3,T_mult);   }
-     | l_value T_divassign expr T_mark   {  operationAndAssignment($1,$3,T_div);    }
-     | l_value T_modassign expr T_mark   {  operationAndAssignment($1,$3,T_mod);    }
+     						fatal("Cannot change constant value. Line = %d\n",lineno);
+     					else if (!assignmentEvaluation($1.type,$3.type))
+     						fatal("Invalid assignment.Cannot assign %s to %s. Line = %d\n",getType($3.type),getType($1.type),lineno);
+     					/*quad*/  
+     					printf("before assign statement\n");
+     					GENQUAD(":=",$3.name,"-",$1.name);
+     					$$.NEXT = EMPTYLIST();
+     					printf("after assign statement\n");
+     					
+     									}
+     | l_value T_plusassign expr T_mark  {  operationAndAssignment($1,$3,T_plus);  /*quad*/  printf("before plusassign\n");GENQUAD("+",$3.name,$1.name,$1.name);$$.NEXT = EMPTYLIST();printf("after plusassign\n"); }
+     | l_value T_minusassign expr T_mark {  operationAndAssignment($1,$3,T_minus);  /*quad*/   printf("before minusassign\n");GENQUAD("-",$3.name,$1.name,$1.name);$$.NEXT = EMPTYLIST();printf("after minusassign\n");}
+     | l_value T_multassign expr T_mark  {  operationAndAssignment($1,$3,T_mult);   /*quad*/   printf("before multassign\n");GENQUAD("*",$3.name,$1.name,$1.name);$$.NEXT = EMPTYLIST();printf("after multassign\n");}
+     | l_value T_divassign expr T_mark   {  operationAndAssignment($1,$3,T_div);    /*quad*/   printf("before divassign\n");GENQUAD("/",$3.name,$1.name,$1.name);$$.NEXT = EMPTYLIST();printf("after divassign\n");}
+     | l_value T_modassign expr T_mark   {  operationAndAssignment($1,$3,T_mod);    /*quad*/   printf("before modassign\n");GENQUAD("%",$3.name,$1.name,$1.name);$$.NEXT = EMPTYLIST();printf("after modassign\n");}
      | l_value T_pp  T_mark { unit_expression.type = typeInteger; unit_expression.is_constant = 1; unit_expression.value.x = 1;
-     						  operationAndAssignment($1,unit_expression,T_plus); 
+     				operationAndAssignment($1,unit_expression,T_plus); 
+     			/*quad*/   printf("before ++\n");GENQUAD("+",$1.name,"1",$1.name);$$.NEXT = EMPTYLIST();printf("after ++\n");
      						}
      | l_value T_mm T_mark  { unit_expression.type = typeInteger; unit_expression.is_constant = 1; unit_expression.value.x = 1;
-     						  operationAndAssignment($1,unit_expression,T_minus);   
-     						} 
-     | call T_mark { }
-     | T_if T_lpar expr T_rpar stmt {   if (!equalType($3.type,typeBoolean)) 
-											fatal("Expression in if statement not boolean. Line = %d\n",lineno);	     													
+     					operationAndAssignment($1,unit_expression,T_minus);   
+     					/*quad*/   printf("before --\n");GENQUAD("-",$1.name,"1",$1.name);$$.NEXT = EMPTYLIST();printf("after --\n");
+     													} 
+     | call T_mark { /*quad*/ $$.NEXT = EMPTYLIST();}
+     | T_if T_lpar cond T_rpar {/*quad*/ printf("before if cond\n");sprintf(temp_name1,"%d",NEXTQUAD());BACKPATCH(fp,$3._TRUE_,temp_name1);if(fileno(fp) == -1) fp = fopen("quads.txt","a+");L1 = $3._FALSE_; L2 = EMPTYLIST();printf("after if cond\n");}
+     	 stmt {   if (!equalType($3.type,typeBoolean)) 
+			fatal("Expression in if statement not boolean. Line = %d\n",lineno);	     			
+		/*quad*/ printf("before if stmt\n");
+			L3 = MERGE($6.NEXT,L2);
+			printf("if stmt 1 \n");
+			$$.NEXT = MERGE(L1,L3);
+			printf("after if stmt\n");							
      								}
-     | T_if T_lpar expr T_rpar stmt T_else stmt {   if (!equalType($3.type,typeBoolean)) 
-														fatal("Expression in if statement not boolean. Line = %d\n",lineno);	     													
-     								  }
-     | T_while { loop_counter++; } T_lpar expr T_rpar stmt {    if (!equalType($4.type,typeBoolean)) 
-															    	fatal("Expression in if statement not boolean. Line = %d\n",lineno);	     													
-																loop_counter--;     								   						
-     								   						}
-     | T_FOR { loop_counter++; } T_lpar T_id T_coma range T_rpar stmt {  p = lookupEntry($4,LOOKUP_ALL_SCOPES,0);
-     																	if (!p) 
-     																		fatal("Variable '%s' in for loop does not exist. Line = %d\n",$4,lineno);
-     																	else if (!valid_loop_variable(p))
-	   																		fatal("Variable '%s' in for loop is not an integer. Line = %d\n");
-    																	loop_counter--;
-     																  }
-     | T_do T_while { loop_counter++; } T_lpar expr T_rpar T_mark {    if (!equalType($5.type,typeBoolean)) 
-													  							fatal("Expression in while statement not boolean. Line = %d\n",lineno);	     													
-     								  							   	   		loop_counter--;
-     								  							   	   }
-     | T_switch T_lpar expr T_rpar T_lhook switch_cases T_rhook  {    if ($3.type!=typeInteger)
-     																	fatal("Expression in switch statement is not integer. Line = %d\n",lineno);
-     															}
+     | T_if T_lpar cond T_rpar {/*quad*/ printf("before if-else cond\n");sprintf(temp_name1,"%d",NEXTQUAD());BACKPATCH(fp,$3._TRUE_,temp_name1);if(fileno(fp) == -1) fp = fopen("quads.txt","a+");L1 = $3._FALSE_; L2 = EMPTYLIST();printf("after if-else cond\n");} 
+     	stmt T_else {/*quad*/printf("before if-else stmt\n");L1 = MAKELIST(NEXTQUAD());GENQUAD("jump","-","-","*");sprintf(temp_name1,"%d",NEXTQUAD());BACKPATCH(fp,$3._FALSE_,temp_name1);if(fileno(fp) == -1) fp = fopen("quads.txt","a+");printf("after if-else stmt\n");} 
+     	stmt {  if (!equalType($3.type,typeBoolean)) 
+			fatal("Expression in if statement not boolean. Line = %d\n",lineno);
+		/*quad*/ 
+		printf("before if-else\n"); 
+		L2 = $9.NEXT;
+		L3 = MERGE($6.NEXT,L2);
+		$$.NEXT = MERGE(L1,L3);	
+		printf("after if-else\n"); 
+     					}
+     | T_while { loop_counter++; 
+     		/*quad*/ 
+     		printf("entered while\n");
+     		$1.NEXT = EMPTYLIST();
+     		Q = NEXTQUAD();
+     		if(loop_seq == NULL)
+     			loop_seq = makeLoopStack(&($1),Q);
+     		else 
+     			loop_seq = LoopPush(loop_seq,Q,&($1));
+     		printf("after word while\n");
+     						} 
+       T_lpar cond T_rpar {/*quad*/ printf("enter after cond\n");sprintf(temp_name1,"%d",NEXTQUAD());BACKPATCH(fp,$4._TRUE_,temp_name1);if(fileno(fp) == -1) fp = fopen("quads.txt","a+");printf("leave after cond\n");} 
+       stmt {    if (!equalType($4.type,typeBoolean)) 
+			fatal("Expression in if statement not boolean. Line = %d\n",lineno);	
+		loop_counter--; 
+	/*quad*/
+		printf("enter after stmt\n");
+		sprintf(temp_name1,"%d",loop_seq->start);
+		printf("while 1\n");
+		BACKPATCH(fp,$7.NEXT,temp_name1);
+		if(fileno(fp) == -1) fp = fopen("quads.txt","a+");
+		printf("while 2\n");
+		sprintf(temp_name1,"%d",loop_seq->start);
+		printf("while 3\n");
+		GENQUAD("jump","-","-",temp_name1);
+		printf("while 4\n");
+		loop_seq = LoopPop(loop_seq);
+		printf("while 5\n");
+		//$$.NEXT = $4.NEXT;
+		$$.NEXT = MERGE($1.NEXT,$4._FALSE_);
+		printf("leave after stmt\n");}
+     | T_FOR { loop_counter++; 
+               /*quad*/ Q = NEXTQUAD()+4; 
+               if(loop_seq == NULL)
+              		loop_seq = makeLoopStack(&($1),Q);
+              	else 
+              		loop_seq = LoopPush(loop_seq,Q,&($1));
+              						} 
+       T_lpar T_id T_coma range {/*quad*/ 
+       				  t = (Type) new(sizeof(struct Type_tag));
+				  printf("FOR2\n");
+				  t->kind = TYPE_INTEGER;
+				  printf("FOR3\n");
+				  t->refCount = 0;
+			          printf("FOR4\n");
+				  W3 = newTemporary(t);
+				  printf("FOR5\n");
+       				  GENQUAD(":=",$6.first,"-",strdup(W3->id));
+       				  printf("FOR6\n");
+       				  GENQUAD(":=",strdup(W3->id),"-",strdup($4)); 
+       				  printf("FOR7\n");
+       				  
+       				  if($6.counting == 1) 
+       				  	{ $1.NEXT = MAKELIST(NEXTQUAD());GENQUAD(">",strdup($4),$6.last,"*"); } 
+       				  else if($6.counting == 2) 
+       				  	{ $1.NEXT = MAKELIST(NEXTQUAD());GENQUAD("<",strdup($4),$6.last,"*");}
+       				  									}
+       T_rpar stmt {  	p = lookupEntry($4,LOOKUP_ALL_SCOPES,0);
+     			if (!p) 
+     				fatal("Variable '%s' in for loop does not exist. Line = %d\n",$4,lineno);
+     			else if (!valid_loop_variable(p))
+	   			fatal("Variable '%s' in for loop is not an integer. Line = %d\n");
+    			loop_counter--;
+    			/*quad*/ 
+    			printf("FOR8\n");
+    			printf("FOR9\n");
+    			if($6.counting == 1){
+    				printf("quads before last add: %d\n",NEXTQUAD());
+    				GENQUAD("+",strdup(W3->id),$6.step,strdup(W3->id));
+    				sprintf(temp_name1,"%d",loop_seq->start);
+    				printf("quads before last jump: %d\n",NEXTQUAD());
+    				GENQUAD("jmp1","-","-",temp_name1);
+    				$$.NEXT = $1.NEXT;}
+    			else if($6.counting == 2){
+    				GENQUAD("-",strdup(W3->id),$6.step,strdup(W3->id));
+    				sprintf(temp_name1,"%d",loop_seq->start);
+    				GENQUAD("jmp1","-","-",temp_name1);
+    				$$.NEXT = $1.NEXT;
+    			}
+    			loop_seq = LoopPop(loop_seq); 
+    			printf("FOR10\n");
+    						}
+     | T_do {/*quad*/ Q = NEXTQUAD(); 
+    		      printf("before do_while stmt\n");
+     			if(loop_seq == NULL)
+     				{loop_seq = makeLoopStack(&($1),Q);}
+     			else 
+     				{loop_seq = LoopPush(loop_seq,Q,&($1));}
+     								}
+       stmt {/*quad*/   printf("before do_while stmt\n");sprintf(temp_name1,"%d",NEXTQUAD());printf("%s\n",temp_name1);BACKPATCH(fp,$3.NEXT,temp_name1);printf("after do_while stmt\n");}
+       T_while { loop_counter++; $1.NEXT = EMPTYLIST();} 
+       T_lpar cond T_rpar 
+       T_mark {    if (!equalType($8.type,typeBoolean)) 
+			fatal("Expression in while statement not boolean. Line = %d\n",lineno);	
+		printf("before 'closing' do-while statement\n");     	
+		loop_counter--;
+		/*quad*/ 
+		printf("'closing' do-while statement 1\n"); 
+		loop_seq = LoopPop(loop_seq);
+		printf("'closing' do-while statement 2\n");
+		sprintf(temp_name3,"%d",loop_seq->start);
+		printf("'closing' do-while statement 3\n");
+		BACKPATCH(fp,$8._TRUE_,temp_name3);
+		if(fileno(fp) == -1) fp = fopen("quads.txt","a+");
+		printf("   fp =  %d \n",fileno(fp));
+		$$.NEXT = MERGE($1.NEXT,$8._FALSE_);
+		//printf("next of while is %d\n",$$.NEXT->quad_num);
+		}
+     | T_switch T_lpar expr {/*quad*/ printf("before switch expr\n");if(switch_seq == NULL){switch_seq = makeSwitchStack(&($3));}else {switch_seq = SwitchPush(switch_seq,&($3));printf("after switch expr\n");} }
+       T_rpar T_lhook switch_cases 
+       T_rhook  {    if ($3.type!=typeInteger)
+     				fatal("Expression in switch statement is not integer. Line = %d\n",lineno);
+     			/*quad*/ 
+     				printf("before close switch\n");
+     				switch_seq = SwitchPop(switch_seq);
+     				printf("before close switch 1\n");
+     			 	sprintf(temp_name1,"%d",NEXTQUAD());
+     			 	printf("before close switch 2\n"); 
+     			 	if($7.NEXT == NULL)	printf("malakia\n");
+     			 	print_list($7.NEXT);
+     			 	printf("before close switch 3\n");
+     				BACKPATCH(fp,$7.NEXT,temp_name1);
+     				if(fileno(fp) == -1) fp = fopen("quads.txt","a+");
+     				printf("after close switch \n");
+     				$$.NEXT = NULL;
+     						}
      | T_break T_mark { if (loop_counter==0) 
-     						fatal("Break statement is not in a loop. Line = %d\n",lineno);
-     				   }
+     			    	fatal("Break statement is not in a loop. Line = %d\n",lineno);
+     		       /*quad*/ L = MAKELIST(NEXTQUAD());
+     			   	GENQUAD("jmp","-","-","*");
+     			   	(loop_seq->stmt)->NEXT = MERGE((loop_seq->stmt)->NEXT,L);
+     			   	$$.NEXT = NULL;
+     				   							}
      | T_cont T_mark  { if (loop_counter==0)
-     						fatal("Continue statement is not in a loop. Line =%d\n",lineno);
-     				  }
-     | T_return expr T_mark { validate_return($2.type); found_return_statement = true; }
-     | T_return T_mark 		{ validate_return(typeVoid); }
-     | block { }
+     				fatal("Continue statement is not in a loop. Line =%d\n",lineno);
+     			/*quad*/ 
+     			printf("entering continue\n");
+     			sprintf(temp_name1,"%d",loop_seq->start);
+     			printf("quads before cont: %d\n",NEXTQUAD());
+     			GENQUAD("jmp","-","-",temp_name1);
+     			printf("quads after cont: %d\n",NEXTQUAD());
+     			printf("leaving continue\n");
+     			$$.NEXT = NULL;
+     				  					}
+     | T_return expr T_mark { validate_return($2.type); found_return_statement = true; 
+     				/*quad*/ 
+     				GENQUAD(":=",$2.name,"-","$$");
+     				GENQUAD("ret","-","-","-");
+     				$$.NEXT = NULL;
+     													}
+     | T_return T_mark 		{ validate_return(typeVoid); /*quad*/ GENQUAD("ret","-","-","-");$$.NEXT = NULL;}
+     | block { /*quad*/ $$.NEXT = $1.NEXT; }
      | write T_lpar T_rpar T_mark { }
      | write T_lpar format format_more T_rpar T_mark {  };
 
 
 
 
-switch_cases : switch_cases choose_case   { }
+switch_cases : switch_cases choose_case   { /*quad*/ $$.NEXT = MERGE($1.NEXT,$2.NEXT); }
 		   | /***nothing***/ {} ;
 
-choose_case : T_case expr T_2dots statement_list T_break T_mark {   if (!equalType(typeInteger,$2.type)) 
-																		fatal("Expression in case statement not of integer type. Line = %d\n",lineno);
-																}
-		    | T_case expr T_2dots statement_list T_NEXT T_mark {   if (!equalType(typeInteger,$2.type)) 
-																		fatal("Expression in case statement not of integer type. Line = %d\n",lineno);
-																}
-		    | T_def T_2dots statement_list T_break T_mark { } 
-		    | T_def T_2dots statement_list T_NEXT T_mark { };
+choose_case : T_case expr {/*quad*/ L = MAKELIST(NEXTQUAD());GENQUAD("<>",(switch_seq->expression)->name,$2.name,"*");}
+	      T_2dots statement_list T_break T_mark {if (!equalType(typeInteger,$2.type)) 
+							  fatal("Expression in case statement not of integer type. Line = %d\n",lineno);
+						   	  /*quad*/ 
+						      L1 = MAKELIST(NEXTQUAD());
+						      $$.NEXT = L1;
+						      GENQUAD("jmp","-","-","*");
+						      sprintf(temp_name1,"%d",NEXTQUAD());
+						      BACKPATCH(fp,L,temp_name1);
+						      if(fileno(fp) == -1) fp = fopen("quads.txt","a+");
+										}
+		    | T_case expr {/*quad*/ L = MAKELIST(NEXTQUAD());GENQUAD("<>",(switch_seq->expression)->name,$2.name,"*");} 
+		      T_2dots statement_list T_NEXT T_mark {   if (!equalType(typeInteger,$2.type)) 
+									fatal("Expression in case statement not of integer type. Line = %d\n",lineno);
+									/*quad*/ 
+								 	$$.NEXT = NULL; 
+									sprintf(temp_name3,"%d",NEXTQUAD());
+									BACKPATCH(fp,L,temp_name3);
+									if(fileno(fp) == -1) fp = fopen("quads.txt","a+");			
+											}
+		    | T_def T_2dots statement_list T_break T_mark { $$.NEXT = NULL; } 
+		    | T_def T_2dots statement_list T_NEXT T_mark { $$.NEXT = NULL;};
 statement_list : statement_list  stmt { }
 			   | { /*nothing*/ };
 
 
-range : expr range_choose expr { validate_range_and_step($1,$3,$1,0);; }
-	  | expr range_choose expr T_STEP expr{ validate_range_and_step($1,$3,$5,1); }
-range_choose : T_TO {  }
-			 | T_DOWNTO {  };
+range : expr range_choose expr { validate_range_and_step($1,$3,$1,0);  /*quad*/ printf("entered range\n");
+										$$.first = $1.name;
+										$$.last = $3.name;
+										printf("range1\n");
+										if($2 == "TO")	
+											$$.counting = 1;
+										else if($2 == "DOWNTO")	
+											$$.counting = 2;
+										t = (Type) new(sizeof(struct Type_tag));
+										printf("range2\n");
+										t->kind = TYPE_INTEGER;
+										printf("range3\n");
+										t->refCount = 0;
+										printf("range4\n");
+										W = newTemporary(t);
+										printf("range5\n");
+										$$.step = strdup(W->id);
+										printf("range6\n");
+										GENQUAD(":=","1","-",$$.step);
+										printf("left range\n"); 
+										
+															}
+	  | expr range_choose expr T_STEP expr{ validate_range_and_step($1,$3,$5,1); 
+	  					/*quad*/ printf("entered range TO/DOWN\n");
+	  						 $$.first = $1.name;
+	  						 $$.last = $3.name;
+	  						 if($2 == "TO")	
+	  							$$.counting = 1;
+	  						 else if($2 == "DOWNTO")	
+	  							$$.counting = 2;
+	  						 $$.step = $5.name;
+	  						 printf("left range TO/DOWN\n");
+	  						 			}
+range_choose : T_TO { $$ = "TO";  }
+			 | T_DOWNTO { $$ = "DOWNTO"; };
 
 
 /* FIX ME */
@@ -483,843 +704,55 @@ write : T_WRITE { }
      | T_WRITESP { }
      | T_WRITESPLN { };
 
+/* Expressions.
+ */
+
+const_expr : { evaluate_constant=1; } expr { $$=$2; } ;
+
+expr : T_const_int  { printf("   fp =  %d \n",fileno(fp));$$.type=typeInteger; $$.is_constant=1;  l_value_flag=0;   /*quad*/ Wq = newTemporary($$.type);sprintf(temp_name1,"%d",$1.value.x);$$.name = strdup(Wq->id);GENQUAD(":=",temp_name1,"-",$$.name);printf("temp var created\n");}
+	 | T_const_real { $$.type=typeReal; $$.is_constant=1;  l_value_flag=0;     /*quad*/ Wq = newTemporary($$.type);sprintf(temp_name1,"%Lf",$1.value.w);$$.name = strdup(Wq->id);GENQUAD(":=",temp_name1,"-",$$.name);printf("temp var created\n");}
+	 | T_const_char { $$.type=typeChar; $$.is_constant=1;  l_value_flag=0;     /*quad*/ Wq = newTemporary($$.type);sprintf(temp_name1,"%c",$1.value.z);printf("character %c  ---\n",($1.value.z));$$.name = strdup(Wq->id);GENQUAD(":=",temp_name1,"-",$$.name);printf("temp var created\n");}
+	 | T_string 	{  $$.type=typeArray(strlen($$.value.q)+1,typeChar); $$.is_constant=1; l_value_flag=0;    /*quad*/Wq = newTemporary($$.type);sprintf(temp_name1,"%s",$1.value.q);$$.name = strdup(Wq->id);GENQUAD(":=",temp_name1,"-",$$.name);printf("temp var created\n");}
+	 | T_true		{ $$.type=typeBoolean; $$.is_constant=1; l_value_flag=0;    /*quad*/ Wq = newTemporary($$.type);sprintf(temp_name1,"%u",$1.value.y);$$.name = strdup(Wq->id);GENQUAD(":=",temp_name1,"-",$$.name);printf("temp var created\n");}
+	 | T_false		{ $$.type=typeBoolean; $$.is_constant=1; l_value_flag=0;    /*quad*/ Wq = newTemporary($$.type);sprintf(temp_name1,"%u",$1.value.y);$$.name = strdup(Wq->id);GENQUAD(":=",temp_name1,"-",$$.name);printf("temp var created\n");}
+ 	 | T_lpar expr T_rpar { $$=$2; l_value_flag=0;    } 
+	 | l_value	      { $$=$1;  }
+	 | call		      { $$.is_constant=0; $$.type=$1.type;l_value_flag=0;    /*quad*/  $$.name = $1.name;}
+	 | T_plus expr 	        { $$=typeInference($2,$2,T_plus,0); l_value_flag=0;    /*quad*/ $$ = $2;}
+	 | T_minus expr         { $$=typeInference($2,$2,T_minus,0);l_value_flag=0;    /*quad*/ Wq = newTemporary($$.type);$$.name = strdup(W->id);GENQUAD("-",$2.name,"-",$$.name);}
+	 | expr T_plus expr     { $$=typeInference($1,$3,T_plus,1);l_value_flag=0;    /*quad*/ printf("before addition1\n");W = newTemporary($$.type);printf("before addition2\n");$$.name = strdup(W->id);printf("before addition3\n");GENQUAD("+",$1.name,$3.name,$$.name);printf("addition done new temp var created\n");}
+	 | expr T_minus expr    { $$=typeInference($1,$3,T_minus,1);l_value_flag=0;    /*quad*/ W = newTemporary($$.type);$$.name = strdup(W->id);GENQUAD("-",$1.name,$3.name,$$.name);}
+	 | expr T_mult expr     { $$=typeInference($1,$3,T_mult,1);l_value_flag=0;	/*quad*/ W = newTemporary($$.type);$$.name = strdup(W->id);GENQUAD("*",$1.name,$3.name,$$.name);}
+	 | expr T_div expr      { $$=typeInference($1,$3,T_div,1);l_value_flag=0;	/*quad*/ W = newTemporary($$.type);$$.name = strdup(W->id);GENQUAD("/",$1.name,$3.name,$$.name);}
+	 | expr T_mod expr      { $$=typeInference($1,$3,T_mod,1);l_value_flag=0;	/*quad*/ W = newTemporary($$.type);$$.name = strdup(W->id);GENQUAD("%",$1.name,$3.name,$$.name);}
+	 | expr T_MOD expr      { $$=typeInference($1,$3,T_MOD,1);l_value_flag=0;	/*quad*/ W = newTemporary($$.type);$$.name = strdup(W->id);GENQUAD("%",$1.name,$3.name,$$.name);}
+	 
+
+
+
+
+cond	:	expr T_equal expr  { $$=typeInference($1,$3,T_less,1);l_value_flag=0;   /*quad*/ printf("before expr equal\n");$$._TRUE_ = MAKELIST(NEXTQUAD());GENQUAD("==",$1.name,$3.name,"*");$$._FALSE_ = MAKELIST(NEXTQUAD());GENQUAD("jump","-","-","*");printf("after expr equal\n");}  
+	|	expr T_nequal expr  { $$=typeInference($1,$3,T_nequal,1);l_value_flag=0;    /*quad*/ printf("before expr n_equal\n");$$._TRUE_ = MAKELIST(NEXTQUAD());GENQUAD("<>",$1.name,$3.name,"*");$$._FALSE_ = MAKELIST(NEXTQUAD());GENQUAD("jump","-","-","*");printf("after expr n_equal\n");}  
+	|	expr T_less expr   { $$=typeInference($1,$3,T_less,1);l_value_flag=0;    /*quad*/ printf("before expr less\n");$$._TRUE_ = MAKELIST(NEXTQUAD());GENQUAD("<",$1.name,$3.name,"*");$$._FALSE_ = MAKELIST(NEXTQUAD());GENQUAD("jump","-","-","*");printf("after expr less\n");}  
+	|	expr T_greater expr   { $$=typeInference($1,$3,T_greater,1);l_value_flag=0;    /*quad*/ printf("before expr greater\n");$$._TRUE_ = MAKELIST(NEXTQUAD());GENQUAD(">",$1.name,$3.name,"*");$$._FALSE_ = MAKELIST(NEXTQUAD());GENQUAD("jump","-","-","*");printf("after expr greater\n");}   
+	|	expr T_lequal expr   { $$=typeInference($1,$3,T_lequal,1);l_value_flag=0;     /*quad*/ printf("before expr lequal\n");$$._TRUE_ = MAKELIST(NEXTQUAD());GENQUAD("<=",$1.name,$3.name,"*");$$._FALSE_ = MAKELIST(NEXTQUAD());GENQUAD("jump","-","-","*");printf("after expr lequal\n");}   
+	|	expr T_egreater expr   { $$=typeInference($1,$3,T_egreater,1);l_value_flag=0;    /*quad*/ printf("before expr egreater\n");$$._TRUE_ = MAKELIST(NEXTQUAD());GENQUAD(">=",$1.name,$3.name,"*");$$._FALSE_ = MAKELIST(NEXTQUAD());GENQUAD("jump","-","-","*");printf("after expr egreater\n");}   	;
+	
+cond	:	T_not cond  { $$=typeInference($2,$2,T_not,0);l_value_flag=0;   /*quad*/  $$._TRUE_ = $2._FALSE_; $$._FALSE_ = $2._TRUE_;} 
+	|	T_notb cond  { $$=typeInference($2,$2,T_notb,0); l_value_flag=0;    /*quad*/  $$._TRUE_ = $2._FALSE_; $$._FALSE_ = $2._TRUE_;}  
+	|	cond T_AND {/*quad*/sprintf(temp_name3,"%d",NEXTQUAD());BACKPATCH(fp,$1._TRUE_,temp_name3 );if(fileno(fp) == -1) fp = fopen("quads.txt","a+"); }cond  { $$=typeInference($1,$4,T_AND,1);l_value_flag=0;    /*quad*/ $$._TRUE_ = $4._TRUE_;$$._FALSE_ = MERGE($1._FALSE_,$4._FALSE_);} 
+	|	cond T_and {/*quad*/sprintf(temp_name3,"%d",NEXTQUAD());BACKPATCH(fp,$1._TRUE_,temp_name3 );if(fileno(fp) == -1) fp = fopen("quads.txt","a+"); } cond  { $$=typeInference($1,$4,T_and,1);l_value_flag=0;    /*quad*/ $$._TRUE_ = $4._TRUE_;$$._FALSE_ = MERGE($1._FALSE_,$4._FALSE_);} 
+	|	cond T_OR {/*quad*/sprintf(temp_name3,"%d",NEXTQUAD());BACKPATCH(fp,$1._FALSE_,temp_name3 );if(fileno(fp) == -1) fp = fopen("quads.txt","a+"); } cond   { $$=typeInference($1,$4,T_OR,1);l_value_flag=0;    /*quad*/ $$._TRUE_ = MERGE($1._TRUE_,$4._TRUE_);$$._FALSE_ = $4._FALSE_;}  
+	|	cond T_or {/*quad*/sprintf(temp_name3,"%d",NEXTQUAD());BACKPATCH(fp,$1._FALSE_,temp_name3);if(fileno(fp) == -1) fp = fopen("quads.txt","a+"); } cond	 { $$=typeInference($1,$4,T_or,1);l_value_flag=0;    /*quad*/ $$._TRUE_ = MERGE($1._TRUE_,$4._TRUE_);$$._FALSE_ = $4._FALSE_;}  	;  
+
+cond	:	expr	{/*quad*/printf("before expr->cond\n");$$._TRUE_ = MAKELIST(NEXTQUAD()); GENQUAD("ifb",$1.name,"-","*");$$._FALSE_ = MAKELIST(NEXTQUAD());GENQUAD("jump","-","-","*");printf("after expr->cond\n");};
+	
+expr	:	cond	{/*quad*/ printf("before cond->expr\n");$$.temp = tempNumber;sprintf(temp_name1,"$%d",tempNumber);$$.name = temp_name1;W = newTemporary(typeBoolean);sprintf(temp_name3,"%d",NEXTQUAD());BACKPATCH(fp,$1._TRUE_,temp_name3);if(fileno(fp) == -1) fp = fopen("quads.txt","a+");GENQUAD(":=","true","-",$$.name);Q = NEXTQUAD()+2;sprintf(temp_name2,"%d",Q);GENQUAD("jump","-","-",temp_name2);sprintf(temp_name3,"%d",NEXTQUAD());BACKPATCH(fp,$1._FALSE_,temp_name3);if(fileno(fp) == -1) fp = fopen("quads.txt","a+");GENQUAD(":=","false","-",$$.name);printf("after cond->expr\n");};
+
 
 
 
 %%
-
-/* validates the declaration of a constant 
- * and creates that constant 
- */
-
-void validate_Constant (const char * variable, Expression e) {
-
-	if (lookupEntry(variable,LOOKUP_CURRENT_SCOPE,0))
-		fatal("Cannot define constant,name already in use Line = %d\n",lineno);
-	else if (!assignmentEvaluation(global_type,e.type))  
-		fatal("Type mismatch in constant %s definition. Line = %d\n",variable,lineno); 
-	else if (!e.is_constant) 
-		fatal("Can not evaluate constant %s in compile time. Line = %d\n",variable,lineno);
-   	else 
-		setConstant(e,variable); 
-
-}
-
-/* validates the declaration of a variable 
- * and creates that variable 
- */
-
- void validate_Variable(const char *variable, Type type) {
- 	
- 	if (lookupEntry(variable,LOOKUP_CURRENT_SCOPE,0)) 
-		fatal("Can not declare variable with name '%s', name already used. Line = %d\n",variable,lineno); 
-	else 
-		newVariable(variable,type); 
-
-
- }
-
-/* validates the declaration of a function
- * and creates that function 
- * p is a global symbol table variable that changes every time we declare a function,and function_type a type variable that changes at every declaration too
- */
-
-void validate_Routine (const char *routine_name, Type type) {
-	
-	if (lookupEntry(routine_name,LOOKUP_CURRENT_SCOPE,0))
-		fatal("Can not declare function with name '%s',name already used. Line = %d\n",routine_name,lineno);
-	p = newFunction(routine_name); 
-	function_type = type; 
-	/* open the scope of the function here
-	 */
-
-	openScope();
-
-	/* we_define_globals is a flag used for the initialiasation of global variables
-	 * function_is_defined is a flag used for the validation of 'return ;' statements
-	 */
-
-	we_define_globals = 0; 
-	function_is_defined = true; 
-}
-
-/* validate the declaration of a variable WITH assignment
- */
-
- void validate_Variable_with_assignment (const char *variable, Type type, Expression e) {
-
- 	if (lookupEntry(variable,LOOKUP_CURRENT_SCOPE,0)) 
-		fatal("Can not declare variable with name '%s', name already used. Line = %d\n",variable,lineno); 
-	else 
-		newVariable(variable,type); 
- 
-	if (!assignmentEvaluation(type,e.type)) 
-		fatal("Type of expression in assignment of variable %s is not compatible with type %s. Line = %d\n",variable,getType(type),lineno); 
-	if  ((we_define_globals)&&(!e.is_constant)) 
- 		fatal("Global variable assignment '%s' is not a constant expression. Line = %d\n",variable,lineno); 
-
- }
-
-
-// validates a print expression 
-
-
-
-void validate_print_expression (Expression x,Expression y,Expression w,int how_many) {
-
-
-	if (how_many==3) {
-		if ((x.type!=typeReal)||(y.type!=typeInteger)||(w.type!=typeInteger))
-			fatal("Expressions in FORM (x,w,d) must have types real,int and int accordingly. Line = %d\n",lineno);
-		return ;
-	}
-
-	if ((x.type!=typeInteger)&&(x.type!=typeReal)&&(x.type!=typeChar)&&(x.type!=typeBoolean)&&(x.type->refType!=typeChar)&&(x.type->refType->refType!=NULL))
-		fatal("Expression x in FORM (x,w) must be of basic type or string. Line = %d\n",lineno);
-	
-	if (how_many == 2)
-		if (y.type != typeInteger)
-			fatal("Expression w in FORM (x,w) must be of integer type. Line = %d\n"); 
-
-	return;
-
-}
-void validate_return(Type return_type) {
-
-	if (!function_is_defined)
-		fatal("Return statement outside of a routine body. Line = %d\n",lineno);
-
-	if (!equalType(function_type,return_type))
-		if (function_type == typeVoid)
-			fatal("Procedure '%s' does not have a type. Line = %d",p->id,lineno);
-		else
-			fatal("Function %s has type %s, expression in return statement has different type. Line = %d",p->id,getType(function_type),lineno);
-	return ;
-}
-
-/* function thath validates the expressions in range 
- * and step of a loop 
- */
-void validate_range_and_step(Expression e1,Expression e2,Expression step,bool has_step){
-
-	if (e1.type!=typeInteger)
-		fatal("Expression in first limit at range of loop not an integer. Line = %d\n",lineno);
-	if (e2.type!=typeInteger)
-		fatal("Expression in second limit at range of loop not an integer. Line = %d\n",lineno);
-	if (has_step&&(step.type!=typeInteger))
-		fatal("Expression in step of loop not an integer. Line = %d\n",lineno);
-	
-	return;
-}
-
-
-bool valid_loop_variable(SymbolEntry *loop_var){
-
-	bool f = false;
-
-	switch(loop_var->entryType){
-		case(ENTRY_PARAMETER):
-			if (loop_var->u.eParameter.type==typeInteger)
-				return true;
-			else return false;
-		case(ENTRY_VARIABLE):
-			if (loop_var->u.eVariable.type==typeInteger)
-				return true;
-			else return false;
-	}
-
-	return false;
-}
-
-/* function that perfomrs the validation of *=,+= etc */
-
-void operationAndAssignment(Expression e1,Expression e2,int operator) {
-
-	Type temporary_type = typeInference(e1,e2,operator,1).type;
-    
-    if (e1.is_constant) 
-     	fatal("Cannot change constant value. Line = %d\n",lineno);
-    else if (!assignmentEvaluation(e1.type,temporary_type))
-     	fatal("Invalid assignment.Cannot assign %s to %s. Line = %d\n",getType(temporary_type),getType(e1.type),lineno); 
-     								  
-     return;
-}
-
-
-/* returns a string typeInteger,typeReal etc from Type */
-char * getType(Type type){
-
-	char *s;
-	s = malloc(16);
-
-	if (type==typeReal)
-		strcpy(s,"Real");
-	else if (type==typeInteger)
-		strcpy(s,"Integer");
-	else if (type==typeBoolean)
-		strcpy(s,"Boolean");
-	else if (type==typeChar)
-		strcpy(s,"Character");
-	
-	return s;
-
-}
-
-/* validates a parameter with an expression
- * if parameter is NULL pointer then more parameters in
- * function call 
- */
-
-void validateParameter(Expression e,SymbolEntry *parameter) {
-
-	Type type,t2;
-	bool assignment;	
-	int count_parameter =0,count_expression = 0;
-
-	if (!parameter)
-		fatal("Function '%s' declared with %d argument(s). Line = %d",f->id,total_parameters,lineno);
-
-	t2 = parameter->u.eParameter.type;
-	type = e.type;
-
-	next_parameter = parameter->u.eParameter.next;
-	parameter_counter++;
-	/* if parameter argument is typeArray then expression must be of the same type */
-	
-	if ((t2!=typeInteger)&&(t2!=typeReal)&&(t2!=typeBoolean)&&(t2!=typeChar)) {
-		//printf("argument is of type array for sure \n");
-		if ((type==typeInteger)||(type==typeReal)||(type==typeBoolean)||(type==typeChar)) 
-			fatal("Argument %d of function '%s' is of type Array. Line = %d",parameter_counter,f->id,lineno);
-
-		while ((t2!=typeInteger)&&(t2!=typeReal)&&(t2!=typeBoolean)&&(t2!=typeChar)) {
-			t2 = t2->refType;
-			count_parameter++;
-		}
-		while ((type!=typeInteger)&&(type!=typeReal)&&(type!=typeBoolean)&&(type!=typeChar)) {
-			type = type->refType;
-			count_expression++;
-		}
-
-		if (count_parameter != count_expression)
-			fatal("Argument %d of function '%s' is a %d-dimension array,parameter is a %d-dimension array. Line = %d\n",parameter_counter,f->id,count_expression,count_parameter);
-
-		if (t2!=type)
-			fatal("Argument %d of function '%s' is a %s array,parameter is a %s array. Line = %d\n",parameter_counter,f->id,getType(t2),getType(type));
-
-
-		return;
-	}
-	
-
-	/* if expression is not an l-value and the paramater has been passed BY_REFERENCE,report error*/
-	//printf("argument is NOT of type array\n");
-
-	if ((parameter->u.eParameter.mode==PASS_BY_REFERENCE)&&(!l_value_flag))
-		fatal("Cannot pass '%d' argument by reference, in function %s. Line = %d\n",parameter_counter,f->id,lineno);
-
-	assignment = assignmentEvaluation(parameter->u.eParameter.type,type);
-	if (!assignment)
-		fatal("Argument %d of function '%s' is not valid. Line = %d\n",parameter_counter,f->id,lineno);
-	
-	
-
-
-	return;
-}
-
-
-/* returns the number of parameters in a function
- * argument is the symbol table entry of the function 
- */
-
-int countParameters(SymbolEntry *temp) {
-
-	int count=0,i;
-	SymbolEntry *first,*temporary,*last;
-
-	temporary=temp->u.eFunction.firstArgument;
-	last=temp->u.eFunction.lastArgument;
-	while (temporary!=last){
-		count++;
-		temporary=temporary->u.eParameter.next;
-	}
-	count++;
-
-	return count;
-}
-
-
-Expression checkForArrayLvalue (const char * variable){
-
-	Expression expr ;
-	SymbolEntry *symbol_table_entry;
-	Type type;
-	int count,dimensions = dimensions_in_expressions;
-
-
-	if (l_value_flag) 
-		l_value_flag = 0; 
-	else 
-		l_value_flag = 1; 	
-	
-	symbol_table_entry = lookupEntry(variable,LOOKUP_ALL_SCOPES,0);
-
-
-	if (!symbol_table_entry)
-		fatal("'%s' does not exist . Line = %d\n",variable,lineno);
-
-
-	if (symbol_table_entry->entryType==ENTRY_FUNCTION)
-		fatal("Missing parameters after %s function. Line = %d\n",variable,lineno);
-
-
-	if (symbol_table_entry->entryType==ENTRY_CONSTANT) {
-		if ((symbol_table_entry->u.eConstant.type == typeBoolean)||(symbol_table_entry->u.eConstant.type == typeReal)||(symbol_table_entry->u.eConstant.type == typeChar)||(symbol_table_entry->u.eConstant.type == typeInteger))
-			fatal(" '%s' is not an array. Line = %d\n",variable,lineno);
-		if (dimensions_in_expressions>1)
-			fatal("String '%s' is a one dimensional array of characters. Line = %d\n",variable,lineno);
-		expr.type = typeChar;
-		expr.is_constant = 0;
-		return expr;
-	}
-
-
-	type = symbol_table_entry->u.eVariable.type;
-
-	if ((symbol_table_entry->u.eConstant.type == typeBoolean)||(symbol_table_entry->u.eConstant.type == typeReal)||(symbol_table_entry->u.eConstant.type == typeChar)||(symbol_table_entry->u.eConstant.type == typeInteger))
-				fatal(" '%s' is not an array. Line = %d\n",variable,lineno);
-
-	while (dimensions > 0) {
-		type = type->refType;
-		if (!type)
-			fatal("Array '%s' has %d dimensions.Line = %d",variable,dimensions_in_expressions,lineno);
-		dimensions--;
-	}
-
-	expr.type = type;
-	expr.is_constant = 0;
-	return expr;
-}
-
-Expression checkForLvalue (const char * variable) {
-
-	Expression expr ;
-	SymbolEntry *symbol_table_entry;
-	Type type;
-
-	/* check for lvalue existance */ 
-
-	symbol_table_entry = lookupEntry(variable,LOOKUP_ALL_SCOPES,0);
-	if (!symbol_table_entry)
-		fatal("'%s' does not exist . Line = %d\n",variable,lineno);
-
-	/* if lvalue is a function fatal : error with parameters */
-
-	if (symbol_table_entry->entryType==ENTRY_FUNCTION)
-		fatal("Missing parameters after %s function. Line = %d\n",variable,lineno);
-
-	/* if lvalue is a constant we return expression with that constant */
-
-	if (symbol_table_entry->entryType==ENTRY_CONSTANT) {
-		expr.is_constant = 1;
-		type = symbol_table_entry->u.eConstant.type;
-		if (type==typeInteger) 
-			expr.value.x = symbol_table_entry->u.eConstant.value.vInteger;
-		else if (type==typeBoolean) 
-			expr.value.y = symbol_table_entry->u.eConstant.value.vBoolean;
-		else if (type==typeChar) 
-			expr.value.z = symbol_table_entry->u.eConstant.value.vChar;
-		else if (type==typeReal) 
-			expr.value.w = symbol_table_entry->u.eConstant.value.vReal;
-		else {
-			expr.value.q = strdup(symbol_table_entry->u.eConstant.value.vString);
-			type = typeArray(strlen(expr.value.q)+1,typeChar);
-		}
-		
-		expr.type = type;
-		return expr;
-	}
-
-	
-	
-	// returns the actual type of varialbe or parameter
-	// it may return arrayType
-
-	if (symbol_table_entry->entryType==ENTRY_PARAMETER)
-		type = symbol_table_entry->u.eParameter.type;
-	else
-		type = symbol_table_entry->u.eVariable.type;
-		
-	/* l_value_flag is used in routine calls in pass by reference mode
-	 * in order to determine if we give a PROPER lvalue
-	 */
-
-	if (l_value_flag) 
-	 	l_value_flag = 0; 
-	 else 
-	 	l_value_flag = 1; 
-
-
-	expr.is_constant = 0;
-	expr.type = type;
-	return expr;
-
-
-}
-
-
-/* returns a Type Array according 
- * to the value of the
- * consant expression in the Expression struct
- */
-
-Type makeArray(Expression e,Type t){
-
-
-	if (t==typeReal)
-		return typeArray(e.value.w,t);
-	else 
-		return typeArray(e.value.x,t);
-
-}
-
-/* function that returns true if 
- * array dimension is not a constant (known at compile time)
- * integer non-zero expression
- */
-
-bool check_array_dimension(Expression e) {
-
-	return ( (e.type==typeBoolean) || ((e.type==typeInteger)&&(e.value.x<=0)&&(e.is_constant)) || (e.type==typeChar) || ((e.is_constant)&&(e.type==typeReal)&&( (e.value.w<=0)||(floor(e.value.w)<e.value.w)) ) ) ;
-
-}
-
-
-
-
-/* function that evaluates if an assignment is corretct, Xt1 = Yt2 
- * returns false if assignment is not possible by the specifications of pazcal
- */
-
-bool assignmentEvaluation(Type t1,Type t2){
-
-	if ((t2!=typeInteger)&&(t2!=typeReal)&&(t2!=typeBoolean)&&(t2!=typeChar))
-		return false;
-
-	if ((t1==typeBoolean)&&(t2==typeBoolean))
-		return true;
-	if (t1==typeReal)
-		if (t2==typeBoolean)
-			return false;
-		else
-			return true;
-	
-	if (t1==typeInteger) 
-		if ((t2==typeBoolean)||(t2==typeReal))
-			return false;
-		else
-			return true;
-	
-	if (t1==typeChar)
-		if ((t2==typeBoolean)||(t2==typeReal))
-			return false;
-		return true;
-
-}
-
-/* function that sets a new constant based on type 
- * and value of the Expression structure 
- */
-
-void setConstant(Expression e,const char *name) {
-
-	if (e.type==typeInteger)
-	    newConstant(name,e.type,e.value.x);
-	if (e.type==typeBoolean)
-	    newConstant(name,e.type,e.value.y);
-	if (e.type==typeChar)
-		newConstant(name,e.type,e.value.z);
-	if (e.type==typeReal)
-		newConstant(name,e.type,e.value.w);
-}
-
-/*
-int get_parameters(SymbolEntry *temp) {
-
-	int count=0,i;
-	SymbolEntry *first,*temporary,*last;
-
-	temporary=temp->u.eFunction.firstArgument;
-	last=temp->u.eFunction.lastArgument;
-	while (temporary!=last){
-		count++;
-		temporary=temporary->u.eParameter.next;
-	}
-	count++;
-
-	return count;
-}
-*/
-
-
- 
-void makeReal(Expression e1,Expression e2,Expression * e3,int operator) {
-
-
-	switch(operator){
-		case(T_plus):
-			if (e1.type==typeReal) {
-				if (e2.type==typeChar) 
-					e3->value.w=e1.value.w+e2.value.z;
-				else if (e2.type==typeReal)
-					e3->value.w=e1.value.w+e2.value.w;
-				else
-				    e3->value.w=e1.value.w+e2.value.x;
-			}
-			else if (e1.type==typeChar)
-				e3->value.w=e1.value.z+e2.value.w;
-			else 
-				e3->value.w=e1.value.x+e2.value.w;
-			
-			return;
-		case(T_minus):
-			if (e1.type==typeReal) {
-				if (e2.type==typeChar) 
-					e3->value.w=e1.value.w-e2.value.z;
-				else if (e2.type==typeReal)
-					e3->value.w=e1.value.w-e2.value.w;
-				else
-				    e3->value.w=e1.value.w-e2.value.x;
-			}
-			else if (e1.type==typeChar)
-				e3->value.w=e1.value.z-e2.value.w;
-			else 
-				e3->value.w=e1.value.x-e2.value.w;
-			
-			return;
-		case(T_mult):
-			if (e1.type==typeReal) {
-				if (e2.type==typeChar) 
-					e3->value.w=e1.value.w*e2.value.z;
-				else if (e2.type==typeReal)
-					e3->value.w=e1.value.w*e2.value.w;
-				else
-				    e3->value.w=e1.value.w*e2.value.x;
-			}
-			else if (e1.type==typeChar)
-				e3->value.w=e1.value.z*e2.value.w;
-			else 
-				e3->value.w=e1.value.x*e2.value.w;
-			
-			return;
-		case(T_div):
-			if (e1.type==typeReal) {
-				if (e2.type==typeChar) 
-					e3->value.w=e1.value.w/e2.value.z;
-				else if (e2.type==typeReal)
-					e3->value.w=e1.value.w/e2.value.w;
-				else
-				    e3->value.w=e1.value.w/e2.value.x;
-			}
-			else if (e1.type==typeChar)
-				e3->value.w=e1.value.z/e2.value.w;
-			else 
-				e3->value.w=e1.value.x/e2.value.w;
-			
-			return;
-	
-	}
-
-}
-
-
-void makeInteger(Expression e1,Expression e2,Expression * e3,int operator) {
-
-
-	switch(operator){
-		case(T_plus):
-			if (e1.type==typeChar) {
-				if (e2.type==typeChar) 
-					e3->value.x=e1.value.z+e2.value.z;
-				else
-				    e3->value.x=e1.value.z+e2.value.x;
-			}
-			else if (e2.type==typeChar)
-				e3->value.x=e1.value.x+e2.value.z;
-			else 
-				e3->value.x=e1.value.x+e2.value.x;
-		
-			return;
-		case(T_minus):
-			if (e1.type==typeChar) {
-				if (e2.type==typeChar) 
-					e3->value.x=e1.value.z-e2.value.z;
-				else
-				    e3->value.x=e1.value.z-e2.value.x;
-			}
-			else if (e2.type==typeChar)
-				e3->value.x=e1.value.x-e2.value.z;
-			else 
-				e3->value.x=e1.value.x-e2.value.x;
-			
-			return;
-		case(T_mult):
-			if (e1.type==typeChar) {
-				if (e2.type==typeChar) 
-					e3->value.x=e1.value.z*e2.value.z;
-				else
-				    e3->value.x=e1.value.z*e2.value.x;
-			}
-			else if (e2.type==typeChar)
-				e3->value.x=e1.value.x*e2.value.z;
-			else 
-				e3->value.x=e1.value.x*e2.value.x;
-			
-			return;
-		case(T_div):
-			if (e1.type==typeChar) {
-				if (e2.type==typeChar) 
-					e3->value.x=e1.value.z/e2.value.z;
-				else
-				    e3->value.x=e1.value.z/e2.value.x;
-			}
-			else if (e2.type==typeChar)
-				e3->value.x=e1.value.x/e2.value.z;
-			else 
-				e3->value.x=e1.value.x/e2.value.x;
-			
-			return;
-	}
-
-
-		
-	if (e1.type==typeChar) {
-		if (e2.type==typeChar) 
-			e3->value.x=e1.value.z%e2.value.z;
-		else
-			e3->value.x=e1.value.z%e2.value.x;
-	}
-	else if (e2.type==typeChar)
-		e3->value.x=e1.value.x%e2.value.z;
-	else 
-		e3->value.x=e1.value.x%e2.value.x;
-	
-	return;
-}
-
-
-void makeComparison(Expression e1,Expression e2,Expression * e3,int operator) {
-
-	switch(operator){
-		case(T_equal):
-			if ((e1.type==typeInteger)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.x==e2.value.x);
-			if ((e1.type==typeInteger)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.x==e2.value.w);
-			if ((e1.type==typeInteger)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.x==e2.value.z);
-			if ((e1.type==typeReal)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.w==e2.value.x);
-			if ((e1.type==typeReal)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.w==e2.value.z);
-			if ((e1.type==typeReal)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.w==e2.value.w);
-			if ((e1.type==typeChar)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.z==e2.value.x);
-			if ((e1.type==typeChar)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.z==e2.value.z);
-			if ((e1.type==typeChar)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.z==e2.value.w);
-			return;
-		case(T_nequal):
-			if ((e1.type==typeInteger)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.x!=e2.value.x);
-			if ((e1.type==typeInteger)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.x!=e2.value.w);
-			if ((e1.type==typeInteger)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.x!=e2.value.z);
-			if ((e1.type==typeReal)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.w!=e2.value.x);
-			if ((e1.type==typeReal)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.w!=e2.value.z);
-			if ((e1.type==typeReal)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.w!=e2.value.w);
-			if ((e1.type==typeChar)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.z!=e2.value.x);
-			if ((e1.type==typeChar)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.z!=e2.value.z);
-			if ((e1.type==typeChar)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.z!=e2.value.w);
-			return;
-		case(T_greater):
-			if ((e1.type==typeInteger)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.x>e2.value.x);
-			if ((e1.type==typeInteger)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.x>e2.value.w);
-			if ((e1.type==typeInteger)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.x>e2.value.z);
-			if ((e1.type==typeReal)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.w>e2.value.x);
-			if ((e1.type==typeReal)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.w>e2.value.z);
-			if ((e1.type==typeReal)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.w>e2.value.w);
-			if ((e1.type==typeChar)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.z>e2.value.x);
-			if ((e1.type==typeChar)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.z>e2.value.z);
-			if ((e1.type==typeChar)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.z>e2.value.w);
-			return;
-		case(T_lequal):
-			if ((e1.type==typeInteger)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.x<=e2.value.x);
-			if ((e1.type==typeInteger)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.x<=e2.value.w);
-			if ((e1.type==typeInteger)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.x<=e2.value.z);
-			if ((e1.type==typeReal)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.w<=e2.value.x);
-			if ((e1.type==typeReal)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.w<=e2.value.z);
-			if ((e1.type==typeReal)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.w<=e2.value.w);
-			if ((e1.type==typeChar)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.z<=e2.value.x);
-			if ((e1.type==typeChar)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.z<=e2.value.z);
-			if ((e1.type==typeChar)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.z<=e2.value.w);
-			return;
-		case(T_egreater):
-			if ((e1.type==typeInteger)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.x>=e2.value.x);
-			if ((e1.type==typeInteger)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.x>=e2.value.w);
-			if ((e1.type==typeInteger)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.x>=e2.value.z);
-			if ((e1.type==typeReal)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.w>=e2.value.x);
-			if ((e1.type==typeReal)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.w>=e2.value.z);
-			if ((e1.type==typeReal)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.w>=e2.value.w);
-			if ((e1.type==typeChar)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.z>=e2.value.x);
-			if ((e1.type==typeChar)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.z>=e2.value.z);
-			if ((e1.type==typeChar)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.z>=e2.value.w);
-			return;
-		case(T_less):
-			if ((e1.type==typeInteger)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.x<e2.value.x);
-			if ((e1.type==typeInteger)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.x<e2.value.w);
-			if ((e1.type==typeInteger)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.x<e2.value.z);
-			if ((e1.type==typeReal)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.w<e2.value.x);
-			if ((e1.type==typeReal)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.w<e2.value.z);
-			if ((e1.type==typeReal)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.w<e2.value.w);
-			if ((e1.type==typeChar)&&(e1.type==typeInteger))
-				e3->value.y=(e1.value.z<e2.value.x);
-			if ((e1.type==typeChar)&&(e1.type==typeChar))
-				e3->value.y=(e1.value.z<e2.value.z);
-			if ((e1.type==typeChar)&&(e1.type==typeReal))
-				e3->value.y=(e1.value.z<e2.value.w);
-			return;
-	}
-}
-
-void makeLogical(Expression e1,Expression e2,Expression * e3,int operator){
-
-	if ((operator==T_and)||(operator==T_AND))
-		e3->value.y=e1.value.y&&e2.value.y;
-	else
-		e3->value.y=e1.value.y||e2.value.y;
-	
-}
-Expression typeInference(Expression e1,Expression e2,int operator,bool two_expressions) {
-
-	
-	Expression e3;
-
-	if (two_expressions)
-        e3.is_constant=e1.is_constant&&e2.is_constant;
-    else 
-    	e3.is_constant=e1.is_constant;
-
-	if ((operator==T_plus)||(operator==T_minus)||(operator==T_mult)||(operator==T_div)||(operator==T_MOD)||(operator==T_mod)&&(two_expressions)) {
-		
-		if ((e1.type==typeBoolean)||(e2.type==typeBoolean))
-			fatal("Expression in operator not of arithmetic type . Line = %d\n",lineno);
-		
-		if ((operator==T_MOD)||(operator==T_mod)) {
-			if ((e1.type==typeReal)||(e2.type==typeReal))
-				fatal("Expression in modulo not of integer types. Line = %d\n",lineno);
-            e3.type=typeInteger;
-            if (e3.is_constant) makeInteger(e1,e2,&e3,operator);
-            	
-        }
-        else {
-            if ((e1.type==typeReal)||(e2.type==typeReal)) {
-            	e3.type=typeReal;
-            	if (e3.is_constant) makeReal(e1,e2,&e3,operator);
-            }
-            else {
-            	e3.type=typeInteger;
-            	if (e3.is_constant) makeInteger(e1,e2,&e3,operator);
-            }
-		}
-	}
-
-	if ((operator==T_equal)||(operator==T_nequal)||(operator==T_greater)||(operator==T_lequal)||(operator==T_egreater)||(operator==T_less)) {
-		if ((e1.type==typeBoolean)||(e2.type==typeBoolean))
-			fatal("Expression in comparison not of arithmetic type. Line = %d\n",lineno);
-		e3.type=typeBoolean;
-		if (e3.is_constant)
-			makeComparison(e1,e2,&e3,operator);
-    }
-
-    if ((operator==T_and)||(operator==T_AND)||(operator==T_or)||(operator==T_OR)) {
-    	if ((e1.type!=typeBoolean)||(e2.type!=typeBoolean))
-    		fatal("Expression in logical operator not of boolean type. Line = %d\n",lineno);
-    	e3.type=typeBoolean;
-    	if (e3.is_constant)
-    		makeLogical(e1,e2,&e3,operator);
-    }
-
-    if ((operator==T_not)||(operator==T_notb)) {
-    	if ((e1.type!=typeBoolean)||(e2.type!=typeBoolean))
-    		fatal("Expression in logical ΝΟΤ , not of arithmetic type. Line = %d\n",lineno);
-    	e3.type=typeBoolean;
-    	if (e3.is_constant)
-    		e3.value.y= !e1.value.y;
-
-    }
-
-    if (((operator==T_plus)||(operator==T_minus))&&(!two_expressions)) {
-    	if ((e1.type==typeBoolean)||(e2.type==typeBoolean))
-    		fatal("Expression in sign relative operator must be of arithmetic type . Line = %d\n",lineno);
-    	e3.type=e1.type;
-    	if (e3.is_constant) {
-    		if (e1.type==typeReal)
-    			e3.value.w= -e1.value.w;
-    		else if (e1.type==typeInteger)
-    			e1.value.x= -e1.value.x;
-    		else 
-    			e3.value.z= -e1.value.z;
-    	}
-    }
-
-    return e3;
-
-
-
-}
 
 void yyerror(const char *msg)
 {
@@ -1335,12 +768,11 @@ int main(){
 
 	/* initialize symbol table and open the global scope */
 	initSymbolTable(256);
-	//printSymbolTable();
 	openScope();
-	//printSymbolTable();
 
 	int result = yyparse();
-
+	destroySymbolTable();
+	
 	if (!result) 
 		printf("Parsing was complete\n");
 	return 1;
