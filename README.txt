@@ -1,8 +1,8 @@
 
 
-                                   |--------------------------------------
-								   |COMPILER FOR C-like LANGUAGE (Pazcal)|
-								   ---------------------------------------
+                                   ---------------------------------------
+				   |COMPILER FOR C-like LANGUAGE (Pazcal)|
+				   ---------------------------------------
 
 This project has been implemented in the course of "Compilers" of National Technical University of Athens.
 It is an implementation of a compiler for a language called Pazcal, that implementents most of the elements of C.
