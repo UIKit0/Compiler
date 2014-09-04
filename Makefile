@@ -1,16 +1,31 @@
-# Makefile -- creates myparser from "scanner.lex" and 
+# OS type: Linux/Win DJGPP
+ifdef OS
+   EXE=.exe
+else
+   EXE=
+endif
 
-$CC=gcc
-LEX=flex
+CFLAGS=-g -Wall
+CC=gcc
 
-myparser: scanner.o 
-	$(CC) -o $@ $(LDFLAGS) $^ -lfl
-	
-scanner.o: scanner.c
-	$(CC) $(CPFLAGS) $(CFLAGS) -o $@ -c $^ 
+parser$(EXE): lexer.o parser.o
+	$(CC) $(CFLAGS) -o $@ $^ -lfl
 
-scanner.c: scanner.lex
-	$(LEX) $(LFLAGS) -o $@ $^ 
+lexer.c: lexer.lex
+	flex -s -o $@ $<
+
+lexer.o: lexer.c parser.h
+
+parser.c parser.h: parser.y
+	bison --report=solved --report=state -v -d -o parser.c $<
+
+.PHONY: clean distclean
 
 clean:
-	$(RM) *.o scanner.c
+	$(RM) lexer.c parser.c parser.h parser.output *.o *~
+
+distclean: clean
+	$(RM) parser$(EXE)
+
+clean_all:
+	$(RM) lexer.c parser.c parser.h parser.output *.o *~ parser$(EXE)

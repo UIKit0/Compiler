@@ -1,0 +1,6 @@
+PROGRAM hello()
+{
+int n = 5  ;
+WRITELN( "Hello world!");
+}
+
